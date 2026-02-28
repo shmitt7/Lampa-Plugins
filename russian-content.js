@@ -1,1 +1,362 @@
-(function(){'use strict';if(window.russian_content_plugin_ready)return;window.russian_content_plugin_ready=true;const MIN_MOVIE_RUNTIME=71;const MIN_CARTOON_RUNTIME=70;const MAIN_PAGE_RESULTS=20;const MAX_PAGES=500;const CACHE_LIFE_HOURS=24;const PARTS_LIMIT=4;const network=new Lampa.Reguest();function getDates(){const today=new Date();const todayStr=today.getFullYear()+'-'+String(today.getMonth()+1).padStart(2,'0')+'-'+String(today.getDate()).padStart(2,'0');const oneMonthAgo=new Date(today);oneMonthAgo.setMonth(oneMonthAgo.getMonth()-1);const oneMonthAgoStr=oneMonthAgo.getFullYear()+'-'+String(oneMonthAgo.getMonth()+1).padStart(2,'0')+'-'+String(oneMonthAgo.getDate()).padStart(2,'0');const oneYearAgo=new Date(today);oneYearAgo.setFullYear(oneYearAgo.getFullYear()-1);const oneYearAgoStr=oneYearAgo.getFullYear()+'-'+String(oneYearAgo.getMonth()+1).padStart(2,'0')+'-'+String(oneYearAgo.getDate()).padStart(2,'0');return{todayStr,oneMonthAgoStr,oneYearAgoStr};} function buildApiUrl(query){return Lampa.TMDB.api(query+'&api_key='+Lampa.TMDB.key()+'&language=ru');} function deduplicate(results){const unique=[];const seenIds=new Set();results.forEach(item=>{const key=item.id+'_'+(item.name?'tv':'movie');if(!seenIds.has(key)){seenIds.add(key);unique.push(item);}});unique.sort((a,b)=>(b.popularity||0)-(a.popularity||0));return unique;} function loadContent(queries,title,onComplete){let results=[];let loaded=0;queries.forEach(query=>{network.silent(buildApiUrl(query),json=>{results=results.concat(json.results||[]);if(++loaded===queries.length){const unique=deduplicate(results);onComplete(Lampa.Utils.addSource({results:unique.slice(0,MAIN_PAGE_RESULTS),source:'tmdb',title:title,total_pages:2,params:{card:{card_small:true}}},'tmdb'));}},()=>{if(++loaded===queries.length)onComplete(Lampa.Utils.addSource({results:[],source:'tmdb',title:title,total_pages:1,params:{card:{card_small:true}}},'tmdb'));},false,{cache:{life:CACHE_LIFE_HOURS}});});} function loadSimple(query,title,onComplete){network.silent(buildApiUrl(query),json=>{onComplete(Lampa.Utils.addSource({results:json.results||[],source:'tmdb',title:title,total_pages:2,params:{card:{card_small:true}}},'tmdb'));},()=>{onComplete(Lampa.Utils.addSource({results:[],source:'tmdb',title:title,total_pages:1,params:{card:{card_small:true}}},'tmdb'));},false,{cache:{life:CACHE_LIFE_HOURS}});} function getQueries(){const dates=getDates();return{nowWatching:['discover/movie?with_original_language=ru&with_runtime.gte='+MIN_MOVIE_RUNTIME+'&primary_release_date.gte='+dates.oneMonthAgoStr+'&primary_release_date.lte='+dates.todayStr+'&sort_by=popularity.desc&page=1','discover/tv?with_original_language=ru&first_air_date.gte='+dates.oneMonthAgoStr+'&first_air_date.lte='+dates.todayStr+'&sort_by=popularity.desc&page=1'],yearPopular:['discover/movie?with_original_language=ru&with_runtime.gte='+MIN_MOVIE_RUNTIME+'&primary_release_date.gte='+dates.oneYearAgoStr+'&primary_release_date.lte='+dates.todayStr+'&sort_by=popularity.desc&page=1','discover/tv?with_original_language=ru&first_air_date.gte='+dates.oneYearAgoStr+'&first_air_date.lte='+dates.todayStr+'&sort_by=popularity.desc&page=1'],movies:'discover/movie?with_original_language=ru&with_runtime.gte='+MIN_MOVIE_RUNTIME+'&primary_release_date.lte='+dates.todayStr+'&sort_by=primary_release_date.desc',series:'discover/tv?with_original_language=ru&without_genres=16&first_air_date.lte='+dates.todayStr+'&sort_by=first_air_date.desc',cartoons:'discover/movie?with_original_language=ru&with_genres=16&with_runtime.gte='+MIN_CARTOON_RUNTIME+'&primary_release_date.lte='+dates.todayStr+'&sort_by=primary_release_date.desc',cartoonSeries:'discover/tv?with_original_language=ru&with_genres=16&first_air_date.lte='+dates.todayStr+'&sort_by=first_air_date.desc',reality:'discover/tv?with_original_language=ru&with_genres=10764&first_air_date.lte='+dates.todayStr+'&sort_by=first_air_date.desc',talkShow:'discover/tv?with_original_language=ru&with_genres=10767&first_air_date.lte='+dates.todayStr+'&sort_by=first_air_date.desc',documentary:'discover/tv?with_original_language=ru&with_genres=99&first_air_date.lte='+dates.todayStr+'&sort_by=first_air_date.desc'};} function russianComponent(object){const comp=Lampa.Maker.make('Main',object);const queries=getQueries();const parts_data=[call=>loadContent(queries.nowWatching,'Сейчас смотрят',call),call=>loadContent(queries.yearPopular,'Популярное за год',call),call=>loadSimple(queries.movies,'Русские фильмы',call),call=>loadSimple(queries.series,'Русские сериалы',call),call=>loadSimple(queries.cartoons,'Русские мультфильмы',call),call=>loadSimple(queries.cartoonSeries,'Русские мультсериалы',call),call=>loadSimple(queries.reality,'Русские реалити-шоу',call),call=>loadSimple(queries.talkShow,'Русские ток-шоу',call),call=>loadSimple(queries.documentary,'Русские документальные',call)];comp.use({onCreate:function(){this.activity.loader(true);Lampa.Api.partNext(parts_data,PARTS_LIMIT,data=>{this.build(data);this.activity.loader(false);this.activity.toggle();},this.empty.bind(this));},onNext:function(resolve,reject){if(parts_data.filter(p=>typeof p==='function').length)Lampa.Api.partNext(parts_data,PARTS_LIMIT,resolve,reject);else reject();},onInstance:function(item,data){item.use({onMore:function(){const routes={'Сейчас смотрят':{component:'russian_now_watching_full',url:''},'Популярное за год':{component:'russian_year_popular_full',url:''},'Русские фильмы':{component:'category_full',url:queries.movies},'Русские сериалы':{component:'category_full',url:queries.series},'Русские мультфильмы':{component:'category_full',url:queries.cartoons},'Русские мультсериалы':{component:'category_full',url:queries.cartoonSeries},'Русские реалити-шоу':{component:'category_full',url:queries.reality},'Русские ток-шоу':{component:'category_full',url:queries.talkShow},'Русские документальные':{component:'category_full',url:queries.documentary}};const route=routes[data.title];if(route)Lampa.Activity.push({url:route.url,title:data.title,component:route.component,page:1,source:'tmdb'});},onInstance:function(card,card_data){card.use({onEnter:Lampa.Router.call.bind(Lampa.Router,'full',card_data),onFocus:()=>{Lampa.Background.change(Lampa.Utils.cardImgBackground(card_data));}});}});}});return comp;} function loadDateRangePage(dateFrom,dateTo,page,onSuccess){let results=[];let loaded=0;const apiPage=Math.ceil(page/2);['movie','tv'].forEach(type=>{const dateParam=type==='movie'?'primary_release_date':'first_air_date';const runtimeFilter=type==='movie'?'&with_runtime.gte='+MIN_MOVIE_RUNTIME:'';network.silent(buildApiUrl('discover/'+type+'?with_original_language=ru'+runtimeFilter+'&'+dateParam+'.gte='+dateFrom+'&'+dateParam+'.lte='+dateTo+'&sort_by=popularity.desc&page='+apiPage),json=>{results=results.concat(json.results||[]);if(++loaded===2)onSuccess({results:deduplicate(results),total_pages:MAX_PAGES});},()=>{if(++loaded===2)onSuccess({results:deduplicate(results),total_pages:MAX_PAGES});},false,{cache:{life:CACHE_LIFE_HOURS}});});} function createPaginationComponent(dateFrom,dateTo){return function(object){const comp=Lampa.Utils.createInstance(Lampa.Maker.get('Category'),object,{module:Lampa.Maker.module('Category').toggle(Lampa.Maker.module('Category').MASK.base,'Pagination')});comp.use({onCreate:function(){this.activity.loader(true);loadDateRangePage(dateFrom,dateTo,object.page||1,data=>{this.build(data);comp.render().find('.category-full').addClass('cols--6');this.activity.loader(false);this.activity.toggle();});},onNext:function(resolve){object.page=(object.page||1)+1;loadDateRangePage(dateFrom,dateTo,object.page,resolve);},onInstance:function(card,card_data){card.use({onEnter:Lampa.Router.call.bind(Lampa.Router,'full',card_data),onFocus:()=>{Lampa.Background.change(Lampa.Utils.cardImgBackground(card_data));}});}});return comp;};} function initComponents(){const dates=getDates();Lampa.Component.add('russian_category',russianComponent);Lampa.Component.add('russian_now_watching_full',createPaginationComponent(dates.oneMonthAgoStr,dates.todayStr));Lampa.Component.add('russian_year_popular_full',createPaginationComponent(dates.oneYearAgoStr,dates.todayStr));} function addRussianMenu(){const button=$(`<li class="menu__item selector"><div class="menu__ico"><svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 35 35"><path d="M7.486,33.076a3.164,3.164,0,0,1-3.164-3.165V5.089A3.164,3.164,0,0,1,9.249,2.461L27.754,14.872a3.165,3.165,0,0,1,0,5.256L9.249,32.539h0A3.156,3.156,0,0,1,7.486,33.076ZM8.552,31.5h0ZM7.491,4.422a.7.7,0,0,0-.317.08.652.652,0,0,0-.352.587V29.911a.664.664,0,0,0,1.034.552L26.362,18.052a.66.66,0,0,0,.294-.553.646.646,0,0,0-.294-.55L7.856,4.537A.649.649,0,0,0,7.491,4.422Z" fill="currentColor"/></svg></div><div class="menu__text">Русское</div></li>`);button.on('hover:enter',()=>{Lampa.Activity.push({url:'',title:'Русский контент',component:'russian_category',page:1});});$('.menu .menu__list').eq(0).append(button);} function init(){initComponents();addRussianMenu();} if(window.appready)init();else Lampa.Listener.follow('app',e=>{if(e.type==='ready')init();});})();
+(function() {
+    'use strict';
+
+    // предотвращаем повторную инициализацию
+    if (window.russianContent) return;
+    window.russianContent = true;
+
+    // конфигурация плагина
+    const CONFIG = {
+        runtime: {
+            minMovies: 71,    // минимальная длительность фильмов (убираем короткометражки)
+            minCartoons: 70   // минимальная длительность мультфильмов (убираем короткометражки)
+        },
+        display: {
+            mainPageItems: 20  // количество элементов в линии на главной
+        },
+        cacheLifeTime: 1440,    // время жизни кэша в минутах (24 часа)
+        pages: {
+            maxTotal: 500,      // максимальное количество страниц в кнопке ЕЩЁ
+            concurrentLimit: 2   // одновременная загрузка разделов
+        }
+    };
+
+    // сетевой клиент
+    const network = new Lampa.Reguest();
+
+    // форматирование дат
+    const DateUtils = (() => {
+        const today = new Date();
+        
+        const formatDate = (date) => {
+            return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+        };
+
+        const monthAgo = new Date(today);
+        monthAgo.setMonth(monthAgo.getMonth() - 1);
+        
+        const yearAgo = new Date(today);
+        yearAgo.setFullYear(yearAgo.getFullYear() - 1);
+
+        return {
+            now: formatDate(today),
+            month: formatDate(monthAgo),
+            year: formatDate(yearAgo)
+        };
+    })();
+
+    // формирование URL для TMDB API
+    const buildUrl = (query) => {
+        return Lampa.TMDB.api(query + '&api_key=' + Lampa.TMDB.key() + '&language=ru');
+    };
+
+    // функции сортировки
+    const sortFunctions = {
+        popularity: (a, b) => (b.popularity || 0) - (a.popularity || 0),
+        date: (a, b) => {
+            const dateA = a.release_date || a.first_air_date || '';
+            const dateB = b.release_date || b.first_air_date || '';
+            return dateB.localeCompare(dateA);
+        }
+    };
+
+    // загрузка данных
+    const loadData = (queries, title, callback, sortFunction) => {
+        const queryArray = Array.isArray(queries) ? queries : [queries];
+        let results = [];
+        let completedCount = 0;
+
+        const onComplete = () => {
+            completedCount++;
+            if (completedCount === queryArray.length) {
+                if (sortFunction) {
+                    results.sort(sortFunction);
+                }
+
+                const responseData = {
+                    results: results.slice(0, CONFIG.display.mainPageItems),
+                    title: title,
+                    source: 'tmdb',
+                    total_pages: 2,
+                    params: {
+                        card: {
+                            card_small: true
+                        }
+                    }
+                };
+
+                callback(Lampa.Utils.addSource(responseData, 'tmdb'));
+            }
+        };
+
+        for (let i = 0; i < queryArray.length; i++) {
+            network.silent(
+                buildUrl(queryArray[i]),
+                (json) => {
+                    results = results.concat(json.results || []);
+                    onComplete();
+                },
+                onComplete,
+                false,
+                { cache: { life: CONFIG.cacheLifeTime } }
+            );
+        }
+    };
+
+    // запросы к API
+    const API_QUERIES = {
+        // сейчас смотрят (фильмы + сериалы за месяц)
+        nowPlaying: [
+            `discover/movie?with_original_language=ru&with_runtime.gte=${CONFIG.runtime.minMovies}&primary_release_date.gte=${DateUtils.month}&primary_release_date.lte=${DateUtils.now}&sort_by=popularity.desc&page=1`,
+            `discover/tv?with_original_language=ru&first_air_date.gte=${DateUtils.month}&first_air_date.lte=${DateUtils.now}&sort_by=popularity.desc&page=1`
+        ],
+        
+        // популярное за год (фильмы + сериалы за год)
+        yearlyPopular: [
+            `discover/movie?with_original_language=ru&with_runtime.gte=${CONFIG.runtime.minMovies}&primary_release_date.gte=${DateUtils.year}&primary_release_date.lte=${DateUtils.now}&sort_by=popularity.desc&page=1`,
+            `discover/tv?with_original_language=ru&first_air_date.gte=${DateUtils.year}&first_air_date.lte=${DateUtils.now}&sort_by=popularity.desc&page=1`
+        ],
+        
+        // русские фильмы (исключаем мультфильмы, документальные)
+        movies: `discover/movie?with_original_language=ru&with_runtime.gte=${CONFIG.runtime.minMovies}&without_genres=16,99&primary_release_date.lte=${DateUtils.now}&sort_by=primary_release_date.desc`,
+        
+        // русские сериалы (исключаем мультсериалы, реалити, ток-шоу, документальные)
+        series: `discover/tv?with_original_language=ru&without_genres=16,10764,10767,99&first_air_date.lte=${DateUtils.now}&sort_by=first_air_date.desc`,
+        
+        // русские мультфильмы
+        cartoons: `discover/movie?with_original_language=ru&with_genres=16&with_runtime.gte=${CONFIG.runtime.minCartoons}&primary_release_date.lte=${DateUtils.now}&sort_by=primary_release_date.desc`,
+        
+        // русские мультсериалы
+        cartoonSeries: `discover/tv?with_original_language=ru&with_genres=16&first_air_date.lte=${DateUtils.now}&sort_by=first_air_date.desc`,
+        
+        // русские реалити-шоу
+        reality: `discover/tv?with_original_language=ru&with_genres=10764&first_air_date.lte=${DateUtils.now}&sort_by=first_air_date.desc`,
+        
+        // русские ток-шоу
+        talkShows: `discover/tv?with_original_language=ru&with_genres=10767&first_air_date.lte=${DateUtils.now}&sort_by=first_air_date.desc`,
+        
+        // русские документальные (фильмы + сериалы)
+        documentary: [
+            `discover/movie?with_original_language=ru&with_genres=99&primary_release_date.lte=${DateUtils.now}&sort_by=primary_release_date.desc&page=1`,
+            `discover/tv?with_original_language=ru&with_genres=99&first_air_date.lte=${DateUtils.now}&sort_by=first_air_date.desc&page=1`
+        ]
+    };
+
+    // основной компонент главной страницы
+    Lampa.Component.add('russian_category', function(params) {
+        const component = Lampa.Utils.createInstance(Lampa.Maker.get('Main'), params);
+
+        // список разделов с функциями загрузки
+        const sections = [
+            (callback) => loadData(API_QUERIES.nowPlaying, 'Сейчас смотрят', callback, sortFunctions.popularity),
+            (callback) => loadData(API_QUERIES.yearlyPopular, 'Популярное за год', callback, sortFunctions.popularity),
+            (callback) => loadData(API_QUERIES.movies, 'Русские фильмы', callback, sortFunctions.date),
+            (callback) => loadData(API_QUERIES.series, 'Русские сериалы', callback, sortFunctions.date),
+            (callback) => loadData(API_QUERIES.cartoons, 'Русские мультфильмы', callback, sortFunctions.date),
+            (callback) => loadData(API_QUERIES.cartoonSeries, 'Русские мультсериалы', callback, sortFunctions.date),
+            (callback) => loadData(API_QUERIES.reality, 'Русские реалити-шоу', callback, sortFunctions.date),
+            (callback) => loadData(API_QUERIES.talkShows, 'Русские ток-шоу', callback, sortFunctions.date),
+            (callback) => loadData(API_QUERIES.documentary, 'Русские документальные', callback, sortFunctions.date)
+        ];
+
+        // маршруты для страниц с полным списком
+        const routes = {
+            'Сейчас смотрят': { component: 'russian_now_full', url: '' },
+            'Популярное за год': { component: 'russian_year_full', url: '' },
+            'Русские фильмы': { component: 'category_full', url: API_QUERIES.movies },
+            'Русские сериалы': { component: 'category_full', url: API_QUERIES.series },
+            'Русские мультфильмы': { component: 'category_full', url: API_QUERIES.cartoons },
+            'Русские мультсериалы': { component: 'category_full', url: API_QUERIES.cartoonSeries },
+            'Русские реалити-шоу': { component: 'category_full', url: API_QUERIES.reality },
+            'Русские ток-шоу': { component: 'category_full', url: API_QUERIES.talkShows },
+            'Русские документальные': { component: 'russian_documentary_full', url: '' }
+        };
+
+        component.use({
+            onCreate() {
+                this.activity.loader(true);
+                
+                Lampa.Api.partNext(
+                    sections,
+                    CONFIG.pages.concurrentLimit,
+                    (data) => {
+                        this.build(data);
+                        this.activity.loader(false);
+                        this.activity.toggle();
+                    },
+                    () => {
+                        this.empty();
+                        this.activity.loader(false);
+                    }
+                );
+            },
+
+            onNext(resolve, reject) {
+                let hasRemainingSections = false;
+                
+                for (let i = 0; i < sections.length; i++) {
+                    if (typeof sections[i] === 'function') {
+                        hasRemainingSections = true;
+                        break;
+                    }
+                }
+
+                if (hasRemainingSections) {
+                    Lampa.Api.partNext(sections, CONFIG.pages.concurrentLimit, resolve, reject);
+                } else {
+                    reject();
+                }
+            },
+
+            onInstance(item, itemData) {
+                item.use({
+                    onMore() {
+                        const route = routes[itemData.title];
+                        if (route) {
+                            Lampa.Activity.push({
+                                url: route.url,
+                                title: itemData.title,
+                                component: route.component,
+                                page: 1,
+                                source: 'tmdb'
+                            });
+                        }
+                    },
+
+                    onInstance(card, cardData) {
+                        card.use({
+                            onEnter: () => Lampa.Router.call('full', cardData),
+                            onFocus: () => Lampa.Background.change(Lampa.Utils.cardImgBackground(cardData))
+                        });
+                    }
+                });
+            }
+        });
+
+        return component;
+    });
+
+    // компоненты для полных списков (сейчас смотрят, популярное за год, документальные)
+    ['now', 'year', 'documentary'].forEach((type) => {
+        Lampa.Component.add(`russian_${type}_full`, function(params) {
+            const component = Lampa.Utils.createInstance(Lampa.Maker.get('Category'), params);
+            const pageCache = new Map();
+
+            const loadPage = (pageNum, callback) => {
+                const cacheKey = `${type}_${pageNum}`;
+                
+                if (pageCache.has(cacheKey)) {
+                    callback(pageCache.get(cacheKey));
+                    return;
+                }
+
+                let queries;
+                if (type === 'now') queries = API_QUERIES.nowPlaying;
+                else if (type === 'year') queries = API_QUERIES.yearlyPopular;
+                else queries = API_QUERIES.documentary;
+                
+                const apiPage = Math.ceil(pageNum / 2);
+                
+                let results = [];
+                let completedCount = 0;
+
+                const onComplete = () => {
+                    completedCount++;
+                    if (completedCount === 2) {
+                        const sortFn = type === 'documentary' ? sortFunctions.date : sortFunctions.popularity;
+                        const pageData = {
+                            results: results.sort(sortFn),
+                            total_pages: CONFIG.pages.maxTotal,
+                            source: 'tmdb'
+                        };
+                        pageCache.set(cacheKey, pageData);
+                        callback(pageData);
+                    }
+                };
+
+                const loadFromApi = (index) => {
+                    network.silent(
+                        buildUrl(queries[index].replace(/page=1/, `page=${apiPage}`)),
+                        (json) => {
+                            results = results.concat(json.results || []);
+                            onComplete();
+                        },
+                        onComplete,
+                        false,
+                        { cache: { life: CONFIG.cacheLifeTime } }
+                    );
+                };
+
+                loadFromApi(0);
+                loadFromApi(1);
+            };
+
+            component.use({
+                onCreate() {
+                    this.activity.loader(true);
+                    
+                    loadPage(params.page || 1, (data) => {
+                        this.build(data);
+                        this.render().find('.category-full').addClass('cols--6');
+                        this.activity.loader(false);
+                        this.activity.toggle();
+                    });
+                },
+
+                onNext(resolve) {
+                    params.page = (params.page || 1) + 1;
+                    loadPage(params.page, resolve);
+                },
+
+                onInstance(card, cardData) {
+                    card.use({
+                        onEnter: () => Lampa.Router.call('full', cardData),
+                        onFocus: () => Lampa.Background.change(Lampa.Utils.cardImgBackground(cardData))
+                    });
+                }
+            });
+
+            return component;
+        });
+    });
+
+    // добавление пункта в меню
+    const addRussianMenu = () => {
+        const menuList = $('.menu .menu__list').first();
+        
+        if (!menuList[0] || menuList.find('[data-plugin="russian-content"]').length > 0) return;
+
+        const menuItem = $(`
+            <li class="menu__item selector" data-plugin="russian-content">
+                <div class="menu__ico">
+                    <svg width="36" height="36" viewBox="0 0 35 35">
+                        <path d="M7.486,33.076a3.164,3.164,0,0,1-3.164-3.165V5.089A3.164,3.164,0,0,1,9.249,2.461L27.754,14.872a3.165,3.165,0,0,1,0,5.256L9.249,32.539h0A3.156,3.156,0,0,1,7.486,33.076ZM8.552,31.5h0ZM7.491,4.422a.7.7,0,0,0-.317.08.652.652,0,0,0-.352.587V29.911a.664.664,0,0,0,1.034.552L26.362,18.052a.66.66,0,0,0,.294-.553.646.646,0,0,0-.294-.55L7.856,4.537A.649.649,0,0,0,7.491,4.422Z" fill="currentColor"/>
+                    </svg>
+                </div>
+                <div class="menu__text">Русское</div>
+            </li>
+        `);
+
+        menuItem.on('hover:enter', () => {
+            Lampa.Activity.push({
+                url: '',
+                title: 'Русский контент',
+                component: 'russian_category',
+                page: 1
+            });
+        });
+
+        menuList.append(menuItem);
+    };
+
+    // инициализация после загрузки приложения
+    if (window.appready) {
+        addRussianMenu();
+    } else {
+        Lampa.Listener.follow('app', (event) => {
+            if (event.type === 'ready') {
+                addRussianMenu();
+            }
+        });
+    }
+})();
